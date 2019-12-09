@@ -5,6 +5,7 @@
 # 支持的工具列表
 - [集群健康检查](#集群健康检查)
 - [磁盘自动格式化工具](#磁盘自动格式化工具)
+- [节点内存信息 dump 工具](#节点内存信息dump工具)
 
 
 ## 集群健康检查
@@ -19,9 +20,14 @@
 磁盘自动格式化工具主要用于自动格式化当前机器的磁盘，并挂载到对应的目录中。
 详细介绍请见 [磁盘自动格式化工具](mount_disk)
 
+## 节点内存信息dump工具
+节点内存信息 dump 工具主要用于将当前机器的 SequoiaDB 节点的内存信息进行格式化输出。
+详细介绍请见 [节点内存信息 Dump 工具](memory_dump)
+
 
 
 [^_^]:
     此处为链接或引用
 [cluster_health_check]:/cluster_health_check/README.md
 [mount_disk]:/mountDisk/README.md
+[memory_dump]:/memDump/README.md
