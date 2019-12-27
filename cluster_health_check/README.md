@@ -22,5 +22,39 @@ Usage:  Options
 -p [--password] <arg> Password to use when connecting to sequoiadb. If password is not given it's asked from the tty.
 -t [--type] <arg> operation type, multiple types be separated by ',', default:all (all,status,lsn,longtrans)
 ```
+
+- 集群节点状态正常结果示例
+```bash
+[sdbadmin@sdbserver1 cluster_health_check]$ ./check_health.sh
+begin to check sequoiadb health
+check node status......
+Done
+check node lsn......
+Done
+check long transaction......
+Done
+finish to check sequoiadb health
+```
+
+- 集群节点状态异常结果
+```bash
+[sdbadmin@sdbserver1 cluster_health_check]$ ./check_health.sh
+begin to check sequoiadb health
+check node status......
+{"NodeName":"sdbserver3:11820","GroupName":"SYSCatalogGroup","Flag":-15,"ErrInfo":"Network error"}
+{"NodeName":"sdbserver2:11830","GroupName":"group1","Flag":-15,"ErrInfo":"Network error"}
+{"NodeName":"sdbserver3:11830","GroupName":"group1","Flag":-15,"ErrInfo":"Network error"}
+{"NodeName":"sdbserver2:11810","GroupName":"SYSCoord","Flag":-15,"ErrInfo":"Network error"}
+{"NodeName":"sdbserver3:11810","GroupName":"SYSCoord","Flag":-15,"ErrInfo":"Network error"}
+group [group1] has no primary node
+Done
+check node lsn......
+group [group1] has no primary node
+Done
+check long transaction......
+Done
+finish to check sequoiadb health
+```
+
 # 限制
 由于SequoiaDB 官方的 Sdb Shell目前不支持已定义超时时间，故当集群存在僵死节点（连接上，但没有任何响应结果）时，该脚本需要等待超时才会返回结果。根据笔者的测试情况，默认超时时间为300s左右。

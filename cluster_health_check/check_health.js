@@ -6,27 +6,27 @@
  * */
 
 /* host for sequoiadb */
-if (typeof(HOST) != "string") {
+if (typeof (HOST) != "string") {
     HOST = "localhost";
 }
 /* service name for coord */
-if (typeof(SVCNAME) == "undefined") {
+if (typeof (SVCNAME) == "undefined") {
     SVCNAME = 11810;
 }
- /* username to login to sequoiadb */
-if (typeof(SDBUSERNAME) != "string") {
+/* username to login to sequoiadb */
+if (typeof (SDBUSERNAME) != "string") {
     SDBUSERNAME = "";
 }
 /* password for login to sequoiadb */
-if (typeof(SDBPASSWORD) != "string") {
+if (typeof (SDBPASSWORD) != "string") {
     SDBPASSWORD = "";
 }
 /* operation type */
-if (typeof(OP_TYPE) == "undefined") {
+if (typeof (OP_TYPE) == "undefined") {
     OP_TYPE = "ALL";
 }
 /* sequoiadb version */
-if (typeof(SDB_VERSION) == "undefined") {
+if (typeof (SDB_VERSION) == "undefined") {
     SDB_VERSION = "3.2.x";
 }
 
@@ -45,67 +45,39 @@ function logger(msg) {
 function checkNodeStatus(nodeStatusArr) {
 
     logger("check node status......");
-    var hasErrorNode = false;
-    // before 3.0 version, coord node need to be checked separately
-    if (SDB_VERSION < "3.0") {
-        var tmpDb = undefined;
-        var cursor = undefined;
-        try {
-            tmpDb = new Sdb(HOST, SVCNAME, SDBUSERNAME, SDBPASSWORD);
-            cursor = tmpDb.list(SDB_LIST_GROUPS, {"GroupName" : "SYSCoord"});
-            while(cursor.next()) {
-                var object = cursor.current().toObj();
-                var groups = object["Group"];
-                for( var i = 0; i < groups.length; i++) {
-                    var node = groups[i];
-                    var hostName = node["HostName"];
-                    var port = 11810;
-                    var services = node["Service"];
-                    for(var j = 0; j < services.length; j++) {
-                        var service = services[j];
-                        var type = service["Type"];
-                        if (type == 0) {
-                            port = service["Name"];
-                            break;
-                        }
-                    }
-                    var coord = undefined;
-                    try {
-                        coord = new Sdb(hostName, port, SDBUSERNAME, SDBPASSWORD);
-                    } catch(e) {
-                        hasErrorNode = true;
-                        var errorNode = {};
-                        errorNode["NodeName"] = hostName + ":" + port;
-                        errorNode["GroupName"] = "SYSCoord";
-                        errorNode["Flag"] = e;
-                        errorNode["ErrInfo"] = getLastErrMsg();
-                        logger(JSON.stringify(errorNode));
-                    } finally {
-                        if (coord != undefined) {
-                            coord.close();
-                        }
-                    }
-                } 
-            }
-        } finally {
-            if (tmpDb != undefined) {
-                tmpDb.close();
-            }
-            if (cursor != undefined) {
-                cursor.close();
-            }
-        }
-        
-    }
+    var groupHasPrimary = {};
     for (var i = 0; i < nodeStatusArr.length; i++) {
         var node = nodeStatusArr[i];
         if (node.hasOwnProperty("ErrNodes")) {
             hasErrorNode = true;
             var errorNodes = node["ErrNodes"];
-            for(var j = 0; j < errorNodes.length; j++) {
+            for (var j = 0; j < errorNodes.length; j++) {
                 var errorNode = errorNodes[j];
+                var groupName = errorNode["GroupName"];
+                if (groupName != "SYSCoord" && !groupHasPrimary.hasOwnProperty(groupName)) {
+                    groupHasPrimary[groupName] = undefined;
+                }
                 logger(JSON.stringify(errorNode));
             }
+        } else {
+            var groupName = node["GroupName"];
+            var isPrimary = node["IsPrimary"];
+            if (isPrimary) {
+                if (groupHasPrimary.hasOwnProperty(groupName)) {
+                    var primaryNode = groupHasPrimary[groupName];
+                    if (primaryNode != undefined) {
+                        logger("group [" + groupName + "] has more than one primary node, one is " + node["NodeName"] + ", another is " + primaryNode);
+                    }
+                }
+                groupHasPrimary[groupName] = node["NodeName"];
+            } else if (!groupHasPrimary.hasOwnProperty(groupName)) {
+                groupHasPrimary[groupName] = undefined;
+            }
+        }
+    }
+    for (var group in groupHasPrimary) {
+        if (groupHasPrimary[group] == undefined) {
+            logger("group [" + group + "] has no primary node");
         }
     }
     logger("Done");
@@ -166,7 +138,7 @@ function checkNodeLsn(nodeStatusArr) {
             }
         }
     }
-    for ( var i = 0; i< standbyNodeLSN.length; i++) {
+    for (var i = 0; i < standbyNodeLSN.length; i++) {
         var standbyNode = standbyNodeLSN[i];
         var groupName = standbyNode["GroupName"];
         if (primaryNodeLSN.hasOwnProperty(groupName)) {
@@ -178,8 +150,8 @@ function checkNodeLsn(nodeStatusArr) {
             var primaryNodeLsnOffset = primaryNode["Offset"];
             var primaryNodeLsnVersion = primaryNode["Version"];
             if (primaryNodeLsnOffset != standbyNodeLsnOffset || primaryNodeLsnVersion != standbyNodeLsnVersion) {
-                logger("group [" + groupName + 
-                    "], standby node[" + standbyNodeName + "] lsn[Offset:" + standbyNodeLsnOffset + ",Version:" + standbyNodeLsnVersion + 
+                logger("group [" + groupName +
+                    "], standby node[" + standbyNodeName + "] lsn[Offset:" + standbyNodeLsnOffset + ",Version:" + standbyNodeLsnVersion +
                     "], but primary node[" + primaryNodeName + "] lsn[Offset:" + primaryNodeLsnOffset + ",Version:" + primaryNodeLsnVersion + "]");
             }
         } else {
@@ -189,9 +161,59 @@ function checkNodeLsn(nodeStatusArr) {
     logger("Done");
 }
 
+/**
+ *
+ * get sequoiadb cluster node
+ */
+function getClusterNode() {
+
+    var db = undefined;
+    var listGroupsCursor = undefined;
+    var clusterNodes = {};
+    try {
+        db = new Sdb(HOST, SVCNAME, SDBUSERNAME, SDBPASSWORD);
+        listGroupsCursor = db.list(SDB_LIST_GROUPS);
+        while (listGroupsCursor.next()) {
+            var object = listGroupsCursor.current().toObj();
+            var groupName = object["GroupName"];
+            var groups = object["Group"];
+            var nodeList = new Array();
+            for (var i = 0; i < groups.length; i++) {
+                var node = groups[i];
+                var hostName = node["HostName"];
+                var services = node["Service"];
+                for (var j = 0; j < services.length; j++) {
+                    var service = services[j];
+                    var type = service["Type"];
+                    if (type == 0) {
+                        var port = service["Name"];
+                        var nodeInfo = {};
+                        nodeInfo["host"] = hostName;
+                        nodeInfo["svcname"] = port;
+                        nodeList.push(nodeInfo);
+                        break;
+                    }
+                }
+            }
+            clusterNodes[groupName] = nodeList;
+        }
+    } catch (e) {
+        logger("failed to get cluster node " + e + "(" + getLastErrMsg() + ")");
+        throw e;
+    } finally {
+        if (listGroupsCursor != undefined) {
+            listGroupsCursor.close();
+        }
+        if (db != undefined) {
+            db.close();
+        }
+    }
+    return clusterNodes;
+}
+
 function main() {
     var opTypeArr = new Array();
-    if (OP_TYPE.toUpperCase().indexOf("ALL") != -1 ) {
+    if (OP_TYPE.toUpperCase().indexOf("ALL") != -1) {
         opTypeArr.push("STATUS");
         opTypeArr.push("LSN");
         opTypeArr.push("LONGTRANS");
@@ -199,39 +221,72 @@ function main() {
         opTypeArr = OP_TYPE.split(",");
     }
 
-    var sdb = undefined;
-    try {
-        logger("begin to check sequoiadb health");
-        sdb = new Sdb(HOST, SVCNAME, SDBUSERNAME, SDBPASSWORD);
-        var cursor = sdb.snapshot(SDB_SNAP_DATABASE,{RawData:true});
-        
-        //save node status to array
-        var nodeStatusArr = new Array();
-        while(cursor.next()) {
-            var nodeStatusObj = cursor.current().toObj();
-            nodeStatusArr.push(nodeStatusObj);
-        }
-        cursor.close();
-        
-        for(var i = 0; i < opTypeArr.length; i++) {
-            if (opTypeArr[i].toUpperCase() == "STATUS") {
-                checkNodeStatus(nodeStatusArr);
-            } else if (opTypeArr[i].toUpperCase() == "LSN") {
-                checkNodeLsn(nodeStatusArr);
-            } else if (opTypeArr[i].toUpperCase() == "LONGTRANS") {
-                checkNodeLongTrans(nodeStatusArr);
+    logger("begin to check sequoiadb health");
+    var clusterGroups = getClusterNode();
+    //save node status to array
+    var nodeStatusArr = new Array();
+    var errorNodeArr = new Array();
+    for (var clusterGroup in clusterGroups) {
+
+        var nodeList = clusterGroups[clusterGroup];
+        var groupName = clusterGroup;
+        for (var i = 0; i < nodeList.length; i++) {
+            var node = nodeList[i];
+            var host = node["host"];
+            var svcName = node["svcname"];
+            // 协调节点组
+            if (groupName == "SYSCoord") {
+                var db = undefined;
+                try {
+                    db = new Sdb(host, svcName, SDBUSERNAME, SDBPASSWORD);
+                } catch (e) {
+                    var errorNode = {};
+                    errorNode["NodeName"] = host + ":" + svcName;
+                    errorNode["GroupName"] = groupName;
+                    errorNode["Flag"] = e;
+                    errorNode["ErrInfo"] = getLastErrMsg();
+                    errorNodeArr.push(errorNode);
+                } finally {
+                    if (db != undefined) {
+                        db.close();
+                    }
+                }
+            } else {
+                var db = undefined;
+                try {
+                    db = new Sdb(host, svcName, SDBUSERNAME, SDBPASSWORD);
+                    var nodeObj = db.snapshot(SDB_SNAP_DATABASE).next().toObj();
+                    nodeStatusArr.push(nodeObj);
+                } catch (e) {
+                    var errorNode = {};
+                    errorNode["NodeName"] = host + ":" + svcName;
+                    errorNode["GroupName"] = groupName;
+                    errorNode["Flag"] = e;
+                    errorNode["ErrInfo"] = getLastErrMsg();
+                    errorNodeArr.push(errorNode);
+                } finally {
+                    if (db != undefined) {
+                        db.close();
+                    }
+                }
             }
         }
-        logger("finish to check sequoiadb health");
-    } catch(e) {
-        logger("failed to check sequoiadb health, error:" + e + "(" + getLastErrMsg() + ")");
-        throw e;
-    } finally {
-        if (sdb != undefined) {
-            //close connection for sdb
-            sdb.close();
+    }
+    if (errorNodeArr.length > 0) {
+        var errNodes={};
+        errNodes["ErrNodes"] = errorNodeArr;
+        nodeStatusArr.push(errNodes);
+    }
+    for (var i = 0; i < opTypeArr.length; i++) {
+        if (opTypeArr[i].toUpperCase() == "STATUS") {
+            checkNodeStatus(nodeStatusArr);
+        } else if (opTypeArr[i].toUpperCase() == "LSN") {
+            checkNodeLsn(nodeStatusArr);
+        } else if (opTypeArr[i].toUpperCase() == "LONGTRANS") {
+            checkNodeLongTrans(nodeStatusArr);
         }
     }
+    logger("finish to check sequoiadb health");
 }
 
 main();
